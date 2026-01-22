@@ -1,6 +1,8 @@
+#ifndef PACMIRROR_H_
+#define PACMIRROR_H_
+
 #define _GNU_SOURCE
 #define _XOPEN_SOURCE 600
-#include "pacmirror.h"
 #include <alpm.h>
 #include <getopt.h>
 #include <stdio.h>
@@ -16,23 +18,30 @@
 #define da_append(da, name)                                                    \
   if (da->count >= da->cap) {                                                  \
     da->cap = da->cap == 0 ? 8 : da->cap * 2;                                  \
-    da->pkgs = realloc(da->pkgs, da->cap * sizeof(char *));                    \
+    da->data = realloc(da->data, da->cap * sizeof(char *));                    \
   }                                                                            \
-  da->pkgs[da->count++] = strdup(name);
+  da->data[da->count++] = strdup(name);
 
 #define da_append_l(da, name)                                                  \
   if (da.count >= da.cap) {                                                    \
     da.cap = da.cap == 0 ? 8 : da.cap * 2;                                     \
-    da.pkgs = realloc(da.pkgs, da.cap * sizeof(char *));                       \
+    da.data = realloc(da.data, da.cap * sizeof(char *));                       \
   }                                                                            \
-  da.pkgs[da.count++] = strdup(name);
+  da.data[da.count++] = strdup(name);
 
 #define da_append_null(da)                                                     \
+  if (da->count >= da->cap) {                                                  \
+    da->cap = da->cap == 0 ? 8 : da->cap * 2;                                  \
+    da->data = realloc(da->data, da->cap * sizeof(char *));                    \
+  }                                                                            \
+  da->data[da->count++] = NULL;
+
+#define da_append_null_l(da)                                                   \
   if (da.count >= da.cap) {                                                    \
     da.cap = da.cap == 0 ? 8 : da.cap * 2;                                     \
-    da.pkgs = realloc(da.pkgs, da.cap * sizeof(char *));                       \
+    da.data = realloc(da.data, da.cap * sizeof(char *));                       \
   }                                                                            \
-  da.pkgs[da.count++] = NULL;
+  da.data[da.count++] = NULL;
 
 char AUR_HELPER[256] = "yay";
 char SUDO[256] = "sudo";
@@ -40,7 +49,7 @@ char SUDO[256] = "sudo";
 typedef struct {
   size_t count;
   size_t cap;
-  char **pkgs;
+  char **data;
 } DynArray;
 
 typedef struct {
@@ -82,19 +91,22 @@ static void split_string_into_da(DynArray *da, const char *str) {
   free(copy);
 }
 
+/*
+ * Initialize a generic dynamic array
+ */
+DynArray *init_da(void) {
+  DynArray *p = malloc(sizeof *p);
+  p->count = 0;
+  p->cap = 16;
+  p->data = malloc(p->cap * sizeof *p->data);
+  return p;
+}
+
 static Packages *init_packages(void) {
   Packages *p = malloc(sizeof *p);
-  p->aur.count = 0;
-  p->aur.cap = 16;
-  p->aur.pkgs = malloc(p->aur.cap * sizeof *p->aur.pkgs);
-
-  p->pacman.count = 0;
-  p->pacman.cap = 16;
-  p->pacman.pkgs = malloc(p->pacman.cap * sizeof *p->pacman.pkgs);
-
-  p->rm.count = 0;
-  p->rm.cap = 16;
-  p->rm.pkgs = malloc(p->rm.cap * sizeof *p->rm.pkgs);
+  p->aur = *init_da();
+  p->pacman = *init_da();
+  p->rm = *init_da();
 
   da_append_l(p->aur, AUR_HELPER);
   da_append_l(p->aur, "-S");
@@ -135,7 +147,7 @@ static bool is_installed(const char *name, alpm_list_t *list) {
   return false;
 }
 
-static Packages *get_explicitly_installed_pkgs(void) {
+static Packages *get_explicitly_installed_pkgs(char **pacman, char **aur) {
   Packages *packages = init_packages();
 
   // pacman and aur static arrays:
@@ -207,7 +219,7 @@ static Packages *get_explicitly_installed_pkgs(void) {
 
     if (pkg_get_locality(pkg, handle)) { // Foreign
       for (size_t i = 0; i < aur_config_pkgs.count; i++) {
-        const char *cfg = aur_config_pkgs.pkgs[i];
+        const char *cfg = aur_config_pkgs.data[i];
 
         if (strcmp(cfg, name) == 0) {
           found = true;
@@ -220,7 +232,7 @@ static Packages *get_explicitly_installed_pkgs(void) {
       }
     } else { // Native
       for (size_t i = 0; i < pacman_config_pkgs.count; i++) {
-        const char *cfg = pacman_config_pkgs.pkgs[i];
+        const char *cfg = pacman_config_pkgs.data[i];
 
         if (strcmp(cfg, name) == 0) {
           found = true;
@@ -235,14 +247,14 @@ static Packages *get_explicitly_installed_pkgs(void) {
   }
 
   for (size_t i = 0; i < aur_config_pkgs.count; i++) {
-    const char *cfg = aur_config_pkgs.pkgs[i];
+    const char *cfg = aur_config_pkgs.data[i];
     if (!is_installed(cfg, list)) {
       da_append_l(packages->aur, cfg);
     }
   }
 
   for (size_t i = 0; i < pacman_config_pkgs.count; i++) {
-    const char *cfg = pacman_config_pkgs.pkgs[i];
+    const char *cfg = pacman_config_pkgs.data[i];
     if (!is_installed(cfg, list)) {
       da_append_l(packages->pacman, cfg);
     }
@@ -253,18 +265,18 @@ static Packages *get_explicitly_installed_pkgs(void) {
   alpm_release(handle);
 
   for (size_t i = 0; i < aur_config_pkgs.count; i++) {
-    free(aur_config_pkgs.pkgs[i]);
+    free(aur_config_pkgs.data[i]);
   }
   for (size_t i = 0; i < pacman_config_pkgs.count; i++) {
-    free(pacman_config_pkgs.pkgs[i]);
+    free(pacman_config_pkgs.data[i]);
   }
 
-  free(aur_config_pkgs.pkgs);
-  free(pacman_config_pkgs.pkgs);
+  free(aur_config_pkgs.data);
+  free(pacman_config_pkgs.data);
 
-  da_append_null(packages->aur);
-  da_append_null(packages->pacman);
-  da_append_null(packages->rm);
+  da_append_null_l(packages->aur);
+  da_append_null_l(packages->pacman);
+  da_append_null_l(packages->rm);
 
   return packages;
 }
@@ -294,7 +306,7 @@ static void synchronize_packages(Packages *pkgs) {
   if (pkgs->pacman.count > 4) {
     printf("%sInstalling pacman packages:%s %zu\n", COLOR_GREEN, COLOR_RESET,
            pkgs->pacman.count - 4);
-    fork_exec(pkgs->pacman.pkgs);
+    fork_exec(pkgs->pacman.data);
   } else {
     printf("%spacman packages:%s there is nothing to do\n", COLOR_BOLD,
            COLOR_RESET);
@@ -304,7 +316,7 @@ static void synchronize_packages(Packages *pkgs) {
   if (pkgs->aur.count > 3) {
     printf("%sInstalling AUR packages:%s %zu\n", COLOR_GREEN, COLOR_RESET,
            pkgs->aur.count - 3);
-    fork_exec(pkgs->aur.pkgs);
+    fork_exec(pkgs->aur.data);
   } else {
     printf("%sAUR packages:%s there is nothing to do\n", COLOR_BOLD,
            COLOR_RESET);
@@ -314,17 +326,17 @@ static void synchronize_packages(Packages *pkgs) {
   if (pkgs->rm.count > 4) {
     printf("%sRemoving packages:%s %zu\n", COLOR_GREEN, COLOR_RESET,
            pkgs->rm.count - 4);
-    da_append_null(pkgs->rm);
-    fork_exec(pkgs->rm.pkgs);
+    da_append_null_l(pkgs->rm);
+    fork_exec(pkgs->rm.data);
   }
 
-  free(pkgs->pacman.pkgs);
-  free(pkgs->aur.pkgs);
-  free(pkgs->rm.pkgs);
+  free(pkgs->pacman.data);
+  free(pkgs->aur.data);
+  free(pkgs->rm.data);
   free(pkgs);
 }
 
-int main(int argc, char **argv) {
+int pacmirror(char **pacman, char **aur, int argc, char **argv) {
   char *env = getenv("SUDO");
   if (env)
     strcpy(SUDO, env);
@@ -332,7 +344,7 @@ int main(int argc, char **argv) {
   if (parse_args(argc, argv) == false)
     return 1;
 
-  Packages *pkgs = get_explicitly_installed_pkgs();
+  Packages *pkgs = get_explicitly_installed_pkgs(pacman, aur);
   if (!pkgs) {
     fprintf(stderr, "[FATAL] Failed to get package list\n");
     return 1;
@@ -342,3 +354,4 @@ int main(int argc, char **argv) {
 
   return 0;
 }
+#endif
