@@ -43,7 +43,12 @@
   }                                                                            \
   da.data[da.count++] = NULL;
 
-char AUR_HELPER[256] = "yay";
+#define da_free(da)                                                            \
+  for (size_t i = 0; i < da.count; i++) {                                      \
+    free(da.data[i]);                                                          \
+  }
+
+char AUR_HELPER[256] = "none";
 char SUDO[256] = "sudo";
 
 typedef struct {
@@ -102,14 +107,16 @@ DynArray *init_da(void) {
   return p;
 }
 
-static Packages *init_packages(void) {
+static Packages *init_packages(bool use_aur) {
   Packages *p = malloc(sizeof *p);
-  p->aur = *init_da();
   p->pacman = *init_da();
   p->rm = *init_da();
 
-  da_append_l(p->aur, AUR_HELPER);
-  da_append_l(p->aur, "-S");
+  if (use_aur) {
+    p->aur = *init_da();
+    da_append_l(p->aur, AUR_HELPER);
+    da_append_l(p->aur, "-S");
+  }
 
   da_append_l(p->pacman, SUDO);
   da_append_l(p->pacman, "pacman");
@@ -147,18 +154,21 @@ static bool is_installed(const char *name, alpm_list_t *list) {
   return false;
 }
 
-static Packages *get_explicitly_installed_pkgs(char **pacman, char **aur) {
-  Packages *packages = init_packages();
+static Packages *get_explicitly_installed_pkgs(char **pacman, char **aur,
+                                               bool use_aur) {
+  Packages *packages = init_packages(use_aur);
 
   // pacman and aur static arrays:
   DynArray pacman_config_pkgs = {0, 0, NULL};
   DynArray aur_config_pkgs = {0, 0, NULL};
 
   // "0" is ignored, so we can iterate till NULL instead
-  for (size_t i = 0; aur[i]; i++) {
-    if (strcmp(aur[i], "0") == 0)
-      continue;
-    split_string_into_da(&aur_config_pkgs, aur[i]);
+  if (use_aur) {
+    for (size_t i = 0; aur[i]; i++) {
+      if (strcmp(aur[i], "0") == 0)
+        continue;
+      split_string_into_da(&aur_config_pkgs, aur[i]);
+    }
   }
 
   for (size_t i = 0; pacman[i]; i++) {
@@ -218,16 +228,21 @@ static Packages *get_explicitly_installed_pkgs(char **pacman, char **aur) {
       continue;
 
     if (pkg_get_locality(pkg, handle)) { // Foreign
-      for (size_t i = 0; i < aur_config_pkgs.count; i++) {
-        const char *cfg = aur_config_pkgs.data[i];
+      if (use_aur) {
+        for (size_t i = 0; i < aur_config_pkgs.count; i++) {
+          const char *cfg = aur_config_pkgs.data[i];
 
-        if (strcmp(cfg, name) == 0) {
-          found = true;
-          break;
+          if (strcmp(cfg, name) == 0) {
+            found = true;
+            break;
+          }
         }
-      }
 
-      if (!found) {
+        if (!found) {
+          da_append_l(packages->rm, name);
+        }
+      } else {
+        // Remove all AUR packages
         da_append_l(packages->rm, name);
       }
     } else { // Native
@@ -246,10 +261,12 @@ static Packages *get_explicitly_installed_pkgs(char **pacman, char **aur) {
     }
   }
 
-  for (size_t i = 0; i < aur_config_pkgs.count; i++) {
-    const char *cfg = aur_config_pkgs.data[i];
-    if (!is_installed(cfg, list)) {
-      da_append_l(packages->aur, cfg);
+  if (use_aur) {
+    for (size_t i = 0; i < aur_config_pkgs.count; i++) {
+      const char *cfg = aur_config_pkgs.data[i];
+      if (!is_installed(cfg, list)) {
+        da_append_l(packages->aur, cfg);
+      }
     }
   }
 
@@ -264,17 +281,15 @@ static Packages *get_explicitly_installed_pkgs(char **pacman, char **aur) {
   alpm_unregister_all_syncdbs(handle);
   alpm_release(handle);
 
-  for (size_t i = 0; i < aur_config_pkgs.count; i++) {
-    free(aur_config_pkgs.data[i]);
-  }
-  for (size_t i = 0; i < pacman_config_pkgs.count; i++) {
-    free(pacman_config_pkgs.data[i]);
+  if (use_aur) {
+    da_free(aur_config_pkgs);
+    free(aur_config_pkgs.data);
+    da_append_null_l(packages->aur);
   }
 
-  free(aur_config_pkgs.data);
+  da_free(pacman_config_pkgs);
   free(pacman_config_pkgs.data);
 
-  da_append_null_l(packages->aur);
   da_append_null_l(packages->pacman);
   da_append_null_l(packages->rm);
 
@@ -301,7 +316,7 @@ static int fork_exec(char **argv) {
   return status;
 }
 
-static void synchronize_packages(Packages *pkgs) {
+static void synchronize_packages(Packages *pkgs, bool use_aur) {
   // 4 --> sudo pacman -S ... NULL
   if (pkgs->pacman.count > 4) {
     printf("%sInstalling pacman packages:%s %zu\n", COLOR_GREEN, COLOR_RESET,
@@ -313,13 +328,15 @@ static void synchronize_packages(Packages *pkgs) {
   }
 
   // 3 --> yay -S ... NULL
-  if (pkgs->aur.count > 3) {
-    printf("%sInstalling AUR packages:%s %zu\n", COLOR_GREEN, COLOR_RESET,
-           pkgs->aur.count - 3);
-    fork_exec(pkgs->aur.data);
-  } else {
-    printf("%sAUR packages:%s there is nothing to do\n", COLOR_BOLD,
-           COLOR_RESET);
+  if (use_aur) {
+    if (pkgs->aur.count > 3) {
+      printf("%sInstalling AUR packages:%s %zu\n", COLOR_GREEN, COLOR_RESET,
+             pkgs->aur.count - 3);
+      fork_exec(pkgs->aur.data);
+    } else {
+      printf("%sAUR packages:%s there is nothing to do\n", COLOR_BOLD,
+             COLOR_RESET);
+    }
   }
 
   // 4 --> sudo pacman -Rns ... NULL
@@ -330,9 +347,12 @@ static void synchronize_packages(Packages *pkgs) {
     fork_exec(pkgs->rm.data);
   }
 
-  free(pkgs->pacman.data);
-  free(pkgs->aur.data);
-  free(pkgs->rm.data);
+  if (use_aur) {
+    da_free(pkgs->aur);
+  }
+
+  da_free(pkgs->pacman);
+  da_free(pkgs->rm);
   free(pkgs);
 }
 
@@ -344,13 +364,18 @@ int pacmirror(char **pacman, char **aur, int argc, char **argv) {
   if (parse_args(argc, argv) == false)
     return 1;
 
-  Packages *pkgs = get_explicitly_installed_pkgs(pacman, aur);
+  bool use_aur = true;
+  if (aur == NULL || strcmp(AUR_HELPER, "none") == 0) {
+    use_aur = false;
+  }
+
+  Packages *pkgs = get_explicitly_installed_pkgs(pacman, aur, use_aur);
   if (!pkgs) {
     fprintf(stderr, "[FATAL] Failed to get package list\n");
     return 1;
   }
 
-  synchronize_packages(pkgs);
+  synchronize_packages(pkgs, use_aur);
 
   return 0;
 }
