@@ -34,7 +34,7 @@ If you plan to use configured in C, the building process is rather simple, being
 # ├── pacmirror.c # User provided which includes pacmirror.h
 # └── pacmirror.h
 
-gcc ./src/pacmirror.c -lalpm -o pacmirror
+gcc ./pacmirror.c -lalpm -o pacmirror
 ```
 
 ## Usage
@@ -85,6 +85,8 @@ int main(int argc, char **argv) {
 You may also take advantages of some functions form `pacmirror.h` like `void init_da()` to initialize a dynamic array and build your array with it using `da_append()` and `da_append_null()`.
 
 If you are an Artix Linux user, and you use gremlins packages, you may also compile with the `ARTIX_GREMLINS` define to enable those repositories.
+
+If you want to use AUR packages, you should set the `AUR_HELPER` variable to the wanted one, using a string function like `strnpy` or else. However, if you don't want, you can simply pass `NULL` to the aur parameter and never set the AUR helper.
 
 ## FAQ
 
