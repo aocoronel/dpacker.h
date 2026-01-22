@@ -1,18 +1,15 @@
 # Pacman Mirror
 
-This is the C implementation of the original [pacmirror.py](https://codeberg.org/aocoronel/pacmirror.py) in Bash + Python. This edition is written in C and configured using C.
+> [!NOTE]
+> This is the C implementation of the original [pacmirror.sh](https://codeberg.org/aocoronel/pacmirror.sh). See the peculiarities of this edition in [`C Edition`](#c-edition).
 
 `pacmirror` is a tool that allows you to declare what packages are installed in your system. It's highly inspired in [NixOS](https://nixos.org/) and [rebos](https://gitlab.com/oglo12/rebos), but it's main goals are to simply allow the user to declare the packages they want to install in their system using `pacman`.
 
 To use this, you must read the [`Setup`](#setup) section to properly understand how to use it. Use with caution!
 
-This script will use `pacman -Qqe` to compare the system packages to your configuration, which means only programs explicitly installed by the user, thus does not include dependencies. You will mostly want to add all your system packages first, so the script does not try to remove important programs from your system such as `grub`, `base` and `base-devel`.
+How it works? `pacmirror` will extract all your official packages and AUR packages and compare with the packages you provide it, so it can remove all the packages not in your provided list, and install the ones you haven't provided. You will mostly want to add all your system packages first, so the it does not try to remove important programs from your system such as `grub`, `base` and `base-devel`. So, you decide exactly what programs to be installed. If your configuration does not have `grub`, so it shouldn't be installed.
 
 Differently than [rebos](https://gitlab.com/oglo12/rebos) there is no setup step, which would safely register all your currently installed programs, so you can calmly build your rebos configuration file.
-
-If you run this tool without a properly setting up configuration file it will prompt you to uninstall all everything from your machine. This is a design choice. `pacmirror` will refuse to operate without a config, and won't perform any AUR operations without a supported AUR Helper.
-
-You decide exactly what programs to be installed: If your configuration does not have `grub`, so it shouldn't be installed.
 
 ## Features
 
@@ -20,15 +17,24 @@ You decide exactly what programs to be installed: If your configuration does not
 - Install and remove AUR packages
 - Organize your config using C
 
+## C Edition
+
+Differently from the POSIX Shell implementation of `pacmirror`, this edition focuses on allowing the user to configure using the C programming language, primarily, but it should be possible to interop with another programming language.
+
+`pacmirror` gives you full control over how you control your configuration, so you can build the required packages at compile time or runtime
+
+Currently, `pacmirror` doesn't try to replace `pacman` neither any existing AUR helper, because of this it will run a subprocess of `pacman` to install official packages and uninstall packages, and a user provided AUR helper to install AUR packages.
+
 ## Building
 
-This program is a single file, but depends on a user provided `pacmirror.h`, unless you change the source code.
+If you plan to use configured in C, the building process is rather simple, being just a single header file.
 
 ```bash
-git clone https://github.com/aocoronel/pacmirror.c
-cd pacmirror.c
+# .
+# ├── pacmirror.c # User provided which includes pacmirror.h
+# └── pacmirror.h
+
 gcc ./src/pacmirror.c -lalpm -o pacmirror
-ln -s $(pwd)/pacmirror $HOME/.local/bin
 ```
 
 ## Usage
@@ -39,41 +45,46 @@ pacmirror -a yay # yay, paru, pikaur
 pacmirror -s sudo # sudo, doas
 ```
 
-### Configuration
-
-**Currently there is support for:** Pacman packages and AUR packages.
-
-The `pacmirror.h` needs to define two global variables, `pacman` and `aur`, as of type: `const char *pacman[]`.
-
 #### Setup
 
-To get started, you can add all your installed packages to a starting configuration file:
+To get started, you may add all your installed packages to a starting configuration file. You must provide all your system packages that were **explicitly installed** by the user, do not include dependencies, unless you need it.
 
 ```bash
-# Add all your system packages to a configuration file that were
-# explicitly installed by the user
-
-# Native packages
-pacman -Qqen >> "pacmirror.h"
+# To get all your native packages (official packages)
+pacman -Qqen >> "pacmirror.c"
 # AUR packages
-pacman -Qqem >> "pacmirror.h"
+pacman -Qqem >> "pacmirror.c"
 ```
 
-After that, assign the packages into the required type, and it should be safe to start using `pacmirror` without the risk to compromise important programs.
-
-Quick example:
+After that, you can construct your array as a compile-time known, or at runtime.
 
 ```c
-const char *pacman[] = {
+char *pacman[] = {
   "bash",
   "zsh",
+  ...
+  NULL, // Remember the NULL termination
 }
 
-const char *aur[] = {
+char *aur[] = {
   "tomb",
   "lesspass",
+  ...
+  NULL,
 }
 ```
+
+To run `pacmirror` you have to call the `int pacmirror(char **pacman, char **aur, int argc, char **argv)` function. This function requires you to provide two arrays with packages, which requires **NULL termination**, and just forward `argc` and `argv` from main. For instance, you can keep it tidy:
+
+```c
+int main(int argc, char **argv) {
+    return pacmirror(pacman, aur, argc, argv);
+}
+```
+
+You may also take advantages of some functions form `pacmirror.h` like `void init_da()` to initialize a dynamic array and build your array with it using `da_append()` and `da_append_null()`.
+
+If you are an Artix Linux user, and you use gremlins packages, you may also compile with the `ARTIX_GREMLINS` define to enable those repositories.
 
 ## FAQ
 
