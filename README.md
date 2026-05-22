@@ -96,4 +96,4 @@ If each time you run `pacmirror` and pacman complains that there are packages al
 
 ## License
 
-This repository is licensed under the MIT License, allowing for extensive use, modification, copying, and distribution.
+This repository is licensed through the GNU General Public License, version 2 or later.
