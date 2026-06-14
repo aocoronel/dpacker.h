@@ -3,6 +3,7 @@
 
 #define _GNU_SOURCE
 #define _XOPEN_SOURCE 600
+#include <assert.h>
 #include <alpm.h>
 #include <getopt.h>
 #include <stdio.h>
@@ -15,26 +16,57 @@
 #define COLOR_BOLD "\x1b[1m"
 #define COLOR_RESET "\x1b[0m"
 
-#define da_append(da, name)                                           \
-    if ((da)->count >= (da)->cap) {                                   \
-        (da)->cap = (da)->cap == 0 ? 8 : (da)->cap * 2;               \
-        (da)->data = realloc((da)->data, (da)->cap * sizeof(char *)); \
-    }                                                                 \
+#define DA_INIT_CAPACITY 256
+
+#define eprintf(...) fprintf(stderr, __VA_ARGS__)
+
+#define AOCLIBS_ABORT(msg, ...)                                    \
+    (fprintf(stderr, "%s: %s:%u: ", __func__, __FILE__, __LINE__), \
+     fprintf(stderr, msg " " __VA_ARGS__),                         \
+     fputc('\n', stderr),                                          \
+     abort())
+
+// Asserts an expression, and prints a formatted message
+#ifdef NDEBUG
+#define ASSERT(...)
+#else
+#define ASSERT(expr, ...) \
+    ((expr) ? (void)0 : AOCLIBS_ABORT("Assertion failed: " #expr, __VA_ARGS__))
+#endif
+
+#define ASSERT_NONNULL(exp) ASSERT((exp), "passing NULL pointer to Nonnull parameter")
+
+#define da_reserve(da, new_cap)                                                             \
+    do {                                                                                    \
+        if ((new_cap) > (da)->cap) {                                                        \
+            if ((da)->cap < DA_INIT_CAPACITY) {                                             \
+                (da)->cap = DA_INIT_CAPACITY;                                               \
+            }                                                                               \
+            while ((new_cap) > (da)->cap) {                                                 \
+                (da)->cap *= 2;                                                             \
+            }                                                                               \
+            (da)->data = realloc((da)->data, (da)->cap * sizeof(char *));                   \
+            assert((da)->data && "out of memory while reserving memory for dynamic array"); \
+        }                                                                                   \
+    } while (0)
+
+#define da_append(da, name)            \
+    da_reserve((da), (da)->count + 1); \
     (da)->data[(da)->count++] = strdup(name);
 
-#define da_append_null(da)                                            \
-    if ((da)->count >= (da)->cap) {                                   \
-        (da)->cap = (da)->cap == 0 ? 8 : (da)->cap * 2;               \
-        (da)->data = realloc((da)->data, (da)->cap * sizeof(char *)); \
-    }                                                                 \
+#define da_append_null(da)             \
+    da_reserve((da), (da)->count + 1); \
+    assert((da)->data);                \
     (da)->data[(da)->count++] = NULL;
 
-#define da_free(da)                         \
-    for (size_t i = 0; i < da.count; i++) { \
-        free(da.data[i]);                   \
-    }
+#define da_free(da)                                \
+    do {                                           \
+        for (size_t i = 0; i < (da)->count; i++) { \
+            free((da)->data[i]);                   \
+        }                                          \
+        free((da)->data);                          \
+    } while (0)
 
-char AUR_HELPER[256] = "none";
 char SUDO[256] = "sudo";
 
 typedef struct {
@@ -50,15 +82,13 @@ typedef struct {
 } Packages;
 
 static bool parse_args(int argc, char **argv) {
+    ASSERT_NONNULL(argv);
+
     int opt = 0;
-    // a --> AUR Helper (paru/yay/pikaur)
-    // p --> Privileage Escalation Tool (sudo/doas)
-    while ((opt = getopt(argc, argv, ":a:p:")) != -1) {
+    while ((opt = getopt(argc, argv, ":p:")) != -1) {
         switch (opt) {
-        case 'a':
-            strcpy(AUR_HELPER, optarg);
-            break;
         case 'p':
+            // p --> Privileage Escalation Tool (sudo/doas)
             strcpy(SUDO, optarg);
             break;
         case ':':
@@ -73,6 +103,8 @@ static bool parse_args(int argc, char **argv) {
 }
 
 static void split_string_into_da(PackageList *da, const char *str) {
+    ASSERT_NONNULL(da);
+    ASSERT_NONNULL(str);
     char *copy = strdup(str);
     char *token = strtok(copy, " ");
     while (token) {
@@ -85,21 +117,19 @@ static void split_string_into_da(PackageList *da, const char *str) {
 /*
  * Initialize a generic dynamic array
  */
-void init_da(PackageList *da) {
-    da->count = 0;
-    da->cap = 16;
-    da->data = malloc(da->cap * sizeof *da->data);
+PackageList init_da(void) {
+    return (PackageList){ 0 };
 }
 
-static Packages *init_packages(Packages *p, bool use_aur) {
-    init_da(&p->pacman);
-    init_da(&p->rm);
+static Packages *init_packages(Packages *p) {
+    ASSERT_NONNULL(p);
+    p->pacman = init_da();
+    p->rm = init_da();
+    p->aur = init_da();
 
-    if (use_aur) {
-        init_da(&p->aur);
-        da_append(&p->aur, AUR_HELPER);
-        da_append(&p->aur, "-S");
-    }
+    da_append(&p->aur, "makepkg");
+    da_append(&p->aur, "-si");
+    da_append(&p->aur, "--dir");
 
     da_append(&p->pacman, SUDO);
     da_append(&p->pacman, "pacman");
@@ -115,6 +145,8 @@ static Packages *init_packages(Packages *p, bool use_aur) {
 // Copy pasted from pacman source code:
 // https://gitlab.archlinux.org/pacman/pacman/-/blob/master/src/pacman/query.c
 static unsigned short pkg_get_locality(alpm_pkg_t *pkg, alpm_handle_t *handle) {
+    ASSERT_NONNULL(pkg);
+    ASSERT_NONNULL(handle);
     const char *pkgname = alpm_pkg_get_name(pkg);
     alpm_list_t *j;
     alpm_list_t *sync_dbs = alpm_get_syncdbs(handle);
@@ -128,6 +160,8 @@ static unsigned short pkg_get_locality(alpm_pkg_t *pkg, alpm_handle_t *handle) {
 }
 
 static bool is_installed(const char *name, alpm_list_t *list) {
+    ASSERT_NONNULL(name);
+    ASSERT_NONNULL(list);
     for (alpm_list_t *node = list; node; node = alpm_list_next(node)) {
         alpm_pkg_t *pkg = node->data;
         if (strcmp(alpm_pkg_get_name(pkg), name) == 0) {
@@ -137,16 +171,17 @@ static bool is_installed(const char *name, alpm_list_t *list) {
     return false;
 }
 
-static bool
-get_explicitly_installed_pkgs(Packages *packages, char **pacman, char **aur, bool use_aur) {
-    init_packages(packages, use_aur);
+static bool get_explicitly_installed_pkgs(Packages *packages, char **pacman, char **aur) {
+    ASSERT_NONNULL(packages);
+    ASSERT_NONNULL(pacman);
+    init_packages(packages);
 
     // pacman and aur static arrays:
     PackageList pacman_config_pkgs = { 0, 0, NULL };
     PackageList aur_config_pkgs = { 0, 0, NULL };
 
     // "0" is ignored, so we can iterate till NULL instead
-    if (use_aur) {
+    if (aur) {
         for (size_t i = 0; aur[i]; i++) {
             if (strcmp(aur[i], "0") == 0) continue;
             split_string_into_da(&aur_config_pkgs, aur[i]);
@@ -161,9 +196,7 @@ get_explicitly_installed_pkgs(Packages *packages, char **pacman, char **aur, boo
     alpm_errno_t error;
     alpm_handle_t *handle = alpm_initialize("/", "/var/lib/pacman", &error);
     if (!handle) {
-        fprintf(stderr,
-                "Database is locked. Maybe another pacman process is running? (%d)\n",
-                error);
+        eprintf("Database is locked. Maybe another pacman process is running? (%d)\n", error);
         return false;
     }
 
@@ -200,7 +233,7 @@ get_explicitly_installed_pkgs(Packages *packages, char **pacman, char **aur, boo
     alpm_db_t *localdb = alpm_get_localdb(handle);
     alpm_list_t *list = alpm_db_get_pkgcache(localdb);
     if (!list) {
-        fprintf(stderr, "Failed to get the package cache from the database (%d)\n", error);
+        eprintf("Failed to get the package cache from the database (%d)\n", error);
         alpm_release(handle);
         return false;
     }
@@ -213,21 +246,16 @@ get_explicitly_installed_pkgs(Packages *packages, char **pacman, char **aur, boo
         if (alpm_pkg_get_reason(pkg) != ALPM_PKG_REASON_EXPLICIT) continue;
 
         if (pkg_get_locality(pkg, handle)) { // Foreign
-            if (use_aur) {
-                for (size_t i = 0; i < aur_config_pkgs.count; i++) {
-                    const char *cfg = aur_config_pkgs.data[i];
+            for (size_t i = 0; i < aur_config_pkgs.count; i++) {
+                const char *cfg = aur_config_pkgs.data[i];
 
-                    if (strcmp(cfg, name) == 0) {
-                        found = true;
-                        break;
-                    }
+                if (strcmp(cfg, name) == 0) {
+                    found = true;
+                    break;
                 }
+            }
 
-                if (!found) {
-                    da_append(&packages->rm, name);
-                }
-            } else {
-                // Remove all AUR packages
+            if (!found) {
                 da_append(&packages->rm, name);
             }
         } else { // Native
@@ -246,12 +274,14 @@ get_explicitly_installed_pkgs(Packages *packages, char **pacman, char **aur, boo
         }
     }
 
-    if (use_aur) {
-        for (size_t i = 0; i < aur_config_pkgs.count; i++) {
-            const char *cfg = aur_config_pkgs.data[i];
-            if (!is_installed(cfg, list)) {
-                da_append(&packages->aur, cfg);
-            }
+    for (size_t i = 0; i < aur_config_pkgs.count; i++) {
+        const char *cfg = aur_config_pkgs.data[i];
+        size_t cfg_len = strlen(cfg);
+        if (!is_installed(cfg, list)) {
+            char *path = (char *)malloc(cfg_len + 256);
+            snprintf(path, cfg_len + 256, "./pkg/%s", cfg);
+            da_append(&packages->aur, path);
+            free(path);
         }
     }
 
@@ -266,107 +296,84 @@ get_explicitly_installed_pkgs(Packages *packages, char **pacman, char **aur, boo
     alpm_unregister_all_syncdbs(handle);
     alpm_release(handle);
 
-    if (use_aur) {
-        da_free(aur_config_pkgs);
-        free(aur_config_pkgs.data);
-        da_append_null(&packages->aur);
-    }
-
-    da_free(pacman_config_pkgs);
-    free(pacman_config_pkgs.data);
+    da_free(&aur_config_pkgs);
+    da_free(&pacman_config_pkgs);
 
     da_append_null(&packages->pacman);
+    da_append_null(&packages->aur);
     da_append_null(&packages->rm);
 
     return true;
 }
 
-static int wait_for(pid_t pid) {
+static int run(char **argv) {
+    ASSERT_NONNULL(argv);
+    pid_t pid = fork();
+    if (pid == -1) {
+        eprintf("[ERROR] Failed to run %s\n", argv[0]);
+        exit(1);
+    }
+    if (pid == 0) {
+        execvp(argv[0], argv);
+        exit(127);
+    }
     int status;
     waitpid(pid, &status, 0);
     return WEXITSTATUS(status);
 }
 
-static int fork_exec(char **argv) {
-    pid_t pid = fork();
-    if (pid == -1) {
-        return false;
-    }
-    if (pid == 0) {
-        execvp(argv[0], argv);
-        perror("execvp");
-        exit(127);
-    }
-    int status = wait_for(pid);
-    return status;
-}
-
-static void synchronize_packages(Packages *pkgs, bool use_aur) {
+static void synchronize_packages(Packages *pkgs) {
+    ASSERT_NONNULL(pkgs);
     // 4 --> sudo pacman -S ... NULL
     if (pkgs->pacman.count > 4) {
         printf("%sInstalling pacman packages:%s %zu\n",
                COLOR_GREEN,
                COLOR_RESET,
                pkgs->pacman.count - 4);
-        printf("Packages:\n");
-        for (size_t i = 0; i < pkgs->pacman.count; i++) {
-            printf("-> %s\n", pkgs->pacman.data[i]);
-        }
-        fork_exec(pkgs->pacman.data);
+        run(pkgs->pacman.data);
     } else {
         printf("%spacman packages:%s there is nothing to do\n", COLOR_BOLD, COLOR_RESET);
     }
 
-    // 3 --> yay -S ... NULL
-    if (use_aur) {
-        if (pkgs->aur.count > 3) {
-            printf("%sInstalling AUR packages:%s %zu\n",
-                   COLOR_GREEN,
-                   COLOR_RESET,
-                   pkgs->aur.count - 3);
-            fork_exec(pkgs->aur.data);
-        } else {
-            printf("%sAUR packages:%s there is nothing to do\n", COLOR_BOLD, COLOR_RESET);
-        }
+    // 3 --> makepkg -si --dir ... NULL
+    if (pkgs->aur.count > 4) {
+        printf("%sInstalling AUR packages:%s %zu\n", COLOR_GREEN, COLOR_RESET, pkgs->aur.count - 4);
+        run(pkgs->aur.data);
+    } else {
+        printf("%sAUR packages:%s there is nothing to do\n", COLOR_BOLD, COLOR_RESET);
     }
 
     // 4 --> sudo pacman -Rns ... NULL
     if (pkgs->rm.count > 4) {
         printf("%sRemoving packages:%s %zu\n", COLOR_GREEN, COLOR_RESET, pkgs->rm.count - 4);
         da_append_null(&pkgs->rm);
-        fork_exec(pkgs->rm.data);
+        run(pkgs->rm.data);
     }
 
-    if (use_aur) {
-        da_free(pkgs->aur);
-        free(pkgs->aur.data);
-    }
-
-    da_free(pkgs->pacman);
-    free(pkgs->pacman.data);
-    da_free(pkgs->rm);
-    free(pkgs->rm.data);
+    da_free(&pkgs->aur);
+    da_free(&pkgs->pacman);
+    da_free(&pkgs->rm);
 }
 
 int pacmirror(char **pacman, char **aur, int argc, char **argv) {
+    ASSERT_NONNULL(pacman);
+    ASSERT_NONNULL(argv);
     char *env = getenv("SUDO");
-    if (env) strcpy(SUDO, env);
+    if (env) {
+        assert(strlen(env) < sizeof(SUDO));
+        strcpy(SUDO, env);
+    }
 
     if (parse_args(argc, argv) == false) return 1;
 
-    bool use_aur = true;
-    if (aur == NULL || memcmp(AUR_HELPER, "none", 5) == 0) {
-        use_aur = false;
-    }
-
     Packages pkgs = { 0 };
-    bool err = get_explicitly_installed_pkgs(&pkgs, pacman, aur, use_aur);
+    bool err = get_explicitly_installed_pkgs(&pkgs, pacman, aur);
     if (!err) {
-        fprintf(stderr, "[FATAL] Failed to get package list\n");
+        eprintf("[FATAL] Failed to get package list\n");
         return 1;
     }
 
-    synchronize_packages(&pkgs, use_aur);
+    synchronize_packages(&pkgs);
 
     return 0;
 }
