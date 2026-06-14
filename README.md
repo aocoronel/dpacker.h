@@ -86,7 +86,8 @@ You may also take advantages of some functions form `pacmirror.h` like `void ini
 If you are an Artix Linux user, and you use gremlins packages, you may also compile with the `ARTIX_GREMLINS` define to enable those repositories.
 
 If you want to use AUR packages, there is quite a couple of things you should do. Previously `pacmirror` was using an AUR helper of your liking, however `pacmirror` will now look into `./pkg/`, where it contains other directories with the exact same name of the AUR packages, and within them should be their `PKGBUILD`, you may copy paste them from the AUR, or maintain it yourself. For example, say you want to install `freetube-bin`: go to the AUR repository, and go to the PKGBUILD. Review it and copy it to `./pkg/freetube-bin/PKGBUILD`. The `aur[]` array should contain `freetube-bin` as well.
-```
+
+If you are having trouble to understand how to use it, you can check out my personal `pacmirror` configuration as an example: [pacmirror-config](https://github.com/aocoronel/pacmirror-config)
 
 ## FAQ
 
