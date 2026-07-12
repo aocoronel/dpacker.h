@@ -81,6 +81,13 @@ typedef struct {
     PackageList rm;
 } Packages;
 
+typedef struct {
+    int explicit;
+    int dependency;
+
+    off_t used_size;
+} pkg_metadata;
+
 static bool parse_args(int argc, char **argv) {
     ASSERT_NONNULL(argv);
 
@@ -92,10 +99,10 @@ static bool parse_args(int argc, char **argv) {
             strcpy(SUDO, optarg);
             break;
         case ':':
-            printf("option '%c' needs a value\n", opt);
+            eprintf("error: option '%c' needs a value\n", opt);
             return false;
         case '?':
-            printf("unknown option: %c\n", optopt);
+            eprintf("error: unknown option: '%c'\n", optopt);
             return false;
         }
     }
@@ -171,7 +178,8 @@ static bool is_installed(const char *name, alpm_list_t *list) {
     return false;
 }
 
-static bool get_explicitly_installed_pkgs(Packages *packages, char **pacman, char **aur) {
+static int
+get_explicitly_installed_pkgs(Packages *packages, char **pacman, char **aur, pkg_metadata *out) {
     ASSERT_NONNULL(packages);
     ASSERT_NONNULL(pacman);
     init_packages(packages);
@@ -196,7 +204,7 @@ static bool get_explicitly_installed_pkgs(Packages *packages, char **pacman, cha
     alpm_errno_t error;
     alpm_handle_t *handle = alpm_initialize("/", "/var/lib/pacman", &error);
     if (!handle) {
-        eprintf("Database is locked. Maybe another pacman process is running? (%d)\n", error);
+        eprintf("error: %s\n", alpm_strerror(error));
         return false;
     }
 
@@ -233,7 +241,7 @@ static bool get_explicitly_installed_pkgs(Packages *packages, char **pacman, cha
     alpm_db_t *localdb = alpm_get_localdb(handle);
     alpm_list_t *list = alpm_db_get_pkgcache(localdb);
     if (!list) {
-        eprintf("Failed to get the package cache from the database (%d)\n", error);
+        eprintf("error: failed to get the package cache from the database\n");
         alpm_release(handle);
         return false;
     }
@@ -243,7 +251,16 @@ static bool get_explicitly_installed_pkgs(Packages *packages, char **pacman, cha
         alpm_pkg_t *pkg = node->data;
         const char *name = alpm_pkg_get_name(pkg);
 
-        if (alpm_pkg_get_reason(pkg) != ALPM_PKG_REASON_EXPLICIT) continue;
+        off_t pkg_size = alpm_pkg_get_isize(pkg);
+
+        out->used_size += pkg_size;
+
+        if (alpm_pkg_get_reason(pkg) != ALPM_PKG_REASON_EXPLICIT) {
+            out->dependency += 1;
+            continue;
+        }
+
+        out->explicit += 1;
 
         if (pkg_get_locality(pkg, handle)) { // Foreign
             for (size_t i = 0; i < aur_config_pkgs.count; i++) {
@@ -310,7 +327,7 @@ static int run(char **argv) {
     ASSERT_NONNULL(argv);
     pid_t pid = fork();
     if (pid == -1) {
-        eprintf("[ERROR] Failed to run %s\n", argv[0]);
+        eprintf("error: failed to run %s\n", argv[0]);
         exit(1);
     }
     if (pid == 0) {
@@ -358,6 +375,7 @@ static void synchronize_packages(Packages *pkgs) {
 int pacmirror(char **pacman, char **aur, int argc, char **argv) {
     ASSERT_NONNULL(pacman);
     ASSERT_NONNULL(argv);
+
     char *env = getenv("SUDO");
     if (env) {
         assert(strlen(env) < sizeof(SUDO));
@@ -367,11 +385,14 @@ int pacmirror(char **pacman, char **aur, int argc, char **argv) {
     if (parse_args(argc, argv) == false) return 1;
 
     Packages pkgs = { 0 };
-    bool err = get_explicitly_installed_pkgs(&pkgs, pacman, aur);
-    if (!err) {
-        eprintf("[FATAL] Failed to get package list\n");
-        return 1;
-    }
+    pkg_metadata pkgc = { 0 };
+    bool err = get_explicitly_installed_pkgs(&pkgs, pacman, aur, &pkgc);
+    if (!err) return 1;
+
+    printf("%d explicit packages, and %d dependencies installed, using a total of %zu MBs\n",
+           pkgc.explicit,
+           pkgc.dependency,
+           pkgc.used_size / 1024 / 1024);
 
     synchronize_packages(&pkgs);
 
