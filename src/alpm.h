@@ -1,5 +1,5 @@
-#ifndef PACMIRROR_H_
-#define PACMIRROR_H_
+#ifndef DPACKER_ALPM_H_
+#define DPACKER_ALPM_H_
 
 #include "dpacker.h"
 #include <alpm.h>
@@ -233,4 +233,4 @@ static const char *dpacker_alpm_sync(DPacker *pkgs) {
 
     return NULL;
 }
-#endif
+#endif // DPACKER_ALPM_H_

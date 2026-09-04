@@ -78,18 +78,33 @@ typedef struct {
 } DPacker_Pkg_List;
 
 typedef struct {
+    // Context to be passed from init() to collect() and sync()
+    // This is optional.
+    void *ctx;
+    // Official packages from distribution
     DPacker_Pkg_List installed_native;
+    // User provided packages, like AUR
     DPacker_Pkg_List installed_user;
+    // Packages to be uninstalled
     DPacker_Pkg_List to_remove;
 } DPacker;
 
 // This serves only for analytical purposes
 typedef struct {
-    int manual; // manually installed packages
+    int manual; // manually installed packages, a.k.a explicit
     int dependency;
 
     off_t total_used_size;
 } DPacker_Pkg_Metadata;
+
+typedef struct {
+    // Initialize dynamic arrays
+    const char *(*init)(DPacker *);
+    // Find all packages to be installed, to be removed and dependencies
+    const char *(*collect)(DPacker *, char **manual, char **user, DPacker_Pkg_Metadata *out);
+    // Install/remove packages
+    const char *(*sync)(DPacker *);
+} DPacker_Interface;
 
 static bool dpacker_parse_args(int argc, char **argv) {
     dpacker_assert_nonnull(argv);
@@ -102,10 +117,10 @@ static bool dpacker_parse_args(int argc, char **argv) {
             strcpy(SUDO, optarg);
             break;
         case ':':
-            eprintf("error: option '%c' needs a value\n", opt);
+            errorf("option '%c' needs a value\n", opt);
             return false;
         case '?':
-            eprintf("error: unknown option: '%c'\n", optopt);
+            errorf("unknown option: '%c'\n", optopt);
             return false;
         }
     }
@@ -131,7 +146,7 @@ static int dpacker_sh(char **argv) {
 
     pid_t pid = fork();
     if (pid == -1) {
-        eprintf("error: failed to run %s\n", argv[0]);
+        errorf("failed to run %s\n", argv[0]);
         exit(1);
     }
     if (pid == 0) {
@@ -142,12 +157,6 @@ static int dpacker_sh(char **argv) {
     waitpid(pid, &status, 0);
     return WEXITSTATUS(status);
 }
-
-typedef struct {
-    const char *(*init)(DPacker *);
-    const char *(*collect)(DPacker *, char **manual, char **user, DPacker_Pkg_Metadata *out);
-    const char *(*sync)(DPacker *);
-} DPacker_Interface;
 
 int dpacker(DPacker_Interface interface, char **manual, char **user, int argc, char **argv) {
     dpacker_assert_nonnull(manual);
