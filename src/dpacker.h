@@ -173,15 +173,15 @@ int dpacker(DPacker_Interface interface, char **manual, char **user, int argc, c
     DPacker pkgs = { 0 };
     DPacker_Pkg_Metadata pkg_metadata = { 0 };
 
-#define call(...)                       \
-    do {                                \
-        {                               \
-            const char *err = NULL;     \
-            if (!(err = __VA_ARGS__)) { \
-                errorf("%s\n", err);    \
-                return 1;               \
-            }                           \
-        }                               \
+#define call(...)                      \
+    do {                               \
+        {                              \
+            const char *err = NULL;    \
+            if ((err = __VA_ARGS__)) { \
+                errorf("%s\n", err);   \
+                return 1;              \
+            }                          \
+        }                              \
     } while (0)
 
     call(interface.init(&pkgs));
