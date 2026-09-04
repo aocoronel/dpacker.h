@@ -112,7 +112,7 @@ Previously ~dpacker~ was using an AUR helper of your like, but that's change for
 
 The workflow is the following: Review the ~PKGBUILD~ and the entire source tree, download it and put it in ~./pkg/~. Example: ~mutt-wizard~ package should be ~./pkg/mutt-wizard/PKGBUILD~. After that, just include ~mutt-wizard~ into your ~char *aur[]~ list.
 
-If you are having trouble to understand how to use it, you can check out my personal configuration as an example: [[https://github.com/aocoronel/pacmirror-config][pacmirror-config]].
+If you are having trouble to understand how to use it, you can check out my personal configuration as an example: [[https://github.com/aocoronel/dpacker-config][dpacker-config]].
 
 ** FAQ
 
