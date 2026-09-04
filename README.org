@@ -1,0 +1,127 @@
+* Declarative Package Manager
+
+~dpacker~ is a tool that allows you to declare what packages are installed in your system. It's highly inspired in [[https://nixos.org/][NixOS]] and [[https://gitlab.com/oglo12/rebos][rebos]], but it's main goals are to simply allow the user to declare the packages they want to install in their system the distro package manager. Currently there is support for Arch distros with ~pacman~. Support for Void Linux ~xbps~ is planned.
+
+To use this, you must read the [[#setup][Setup]] section to properly understand how to use it. Use with caution! It's assumed you know the C programming language.
+
+How it works? ~dpacker~ is an thin interface that can be worked upon using a package manager library like ~libalpm~ or ~libxbps~. The user provided interface is responsible collecting all manually installed packages, user provided packages (e.g. AUR package). It should compare the installed packages with the ~dpacker~ configuration, so it can find all packages that must be installed, and which, not present in the configuration, must be uninstalled.
+
+Differently than [[https://gitlab.com/oglo12/rebos][rebos]] there is no setup step, which would safely register all your currently installed programs, so you can calmly build your ~rebos~ configuration file.
+
+** Features
+
+- Install, uninstall packages from configuration
+- Support for ~pacman~ is already provided
+
+** Setup
+
+#+BEGIN_QUOTE
+The following example is valid only for Arch based distributions.
+#+END_QUOTE
+
+To get started, you may add all your installed packages to a starting configuration file. You must provide all your system packages that were **explicitly installed** by the user, do not include dependencies, unless you need it.
+
+#+BEGIN_SRC bash
+# To get all your native packages (official packages)
+pacman -Qqen >> "dpacker.c"
+# AUR packages
+pacman -Qqem >> "dpacker.c"
+#+END_SRC
+
+After that, you can construct your array as a compile-time known, or at runtime (using ~da_append()~).
+
+#+BEGIN_SRC c
+  char *pacman[] = {
+    "bash",
+    "zsh",
+    // rest ...
+    NULL, // Remember the NULL termination
+  }
+
+  char *aur[] = {
+    "tomb",
+    "lesspass",
+    // rest ...
+    NULL,
+  }
+#+END_SRC
+
+~dpacker~ is provided as an interface library ~dpacker.h~ and extra ones like ~alpm.h~, which is the interface implementation for ~pacman~.
+
+To setup you configuration you need to prepare the C source file as follows:
+
+#+BEGIN_SRC c
+  #include "dpacker.h"
+  #include "alpm.h" // for Arch Linux
+
+  char *pacman[] = {
+    "bash",
+    "zsh",
+    // rest ...
+    NULL, // Remember the NULL termination
+  }
+
+  char *aur[] = {
+    "tomb",
+    "lesspass",
+    // rest ...
+    NULL,
+  }
+
+  int main(int argc, char **argv) {
+    // If you ever need to use this for a different package manager, you have full control over it
+    DPacker_Interface interface;
+    interface.init = dpacker_alpm_init;
+    interface.collect = dpacker_alpm_collect;
+    interface.sync = dpacker_alpm_sync;
+    return dpacker(interface, pacman, aur, argc, argv);
+  }
+#+END_SRC
+
+Assumed tree:
+
+#+BEGIN_SRC 
+  # .
+  # ├── alpm.h 
+  # ├── dpacker.c # User provided
+  # └── dpacker.h
+#+END_SRC
+
+*** Compiling
+
+#+BEGIN_SRC bash
+gcc ./dpacker.c -I. -lalpm -o dpacker
+#+END_SRC
+
+** Usage
+
+#+BEGIN_SRC bash
+dpacker
+dpacker -s sudo # sudo, doas
+#+END_SRC
+
+** For Artix Linux users
+
+If you are an Artix Linux user, and you use gremlins packages, you may also compile with the `-DARTIX_GREMLINS` to enable those repositories, since the repositories are currently hardcoded.
+
+** AUR
+
+If you want to use AUR packages, there is quite a couple of things you should do.
+
+Previously ~dpacker~ was using an AUR helper of your like, but that's change for security and control purposes. AUR packages are pretty much ~PKGBUILD~ files, and if you check in ~aur.archlinux.org~, you will find them for whatever package you want.
+
+The workflow is the following: Review the ~PKGBUILD~ and the entire source tree, download it and put it in ~./pkg/~. Example: ~mutt-wizard~ package should be ~./pkg/mutt-wizard/PKGBUILD~. After that, just include ~mutt-wizard~ into your ~char *aur[]~ list.
+
+If you are having trouble to understand how to use it, you can check out my personal configuration as an example: [[https://github.com/aocoronel/pacmirror-config][pacmirror-config]].
+
+** FAQ
+
+*** Arch
+
+**** warning: x is up to date -- skipping
+
+If each time you run ~dpacker~ and ~pacman~ complains that there are packages already up-to-date, it means these packages, where installed as dependencies to another package. You can fix it, by reinstalling them explicitly as follows: ~pacman -S --asexplicit your-package~.
+
+** License
+
+This repository is licensed through the GNU General Public License, version 2 or later.
