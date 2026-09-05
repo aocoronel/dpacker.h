@@ -1,6 +1,6 @@
 * Declarative Package Manager
 
-~dpacker~ is a tool that allows you to declare what packages are installed in your system. It's highly inspired in [[https://nixos.org/][NixOS]] and [[https://gitlab.com/oglo12/rebos][rebos]], but it's main goals are to simply allow the user to declare the packages they want to install in their system the distro package manager. Currently there is support for Arch distros with ~pacman~. Support for Void Linux ~xbps~ is planned.
+~dpacker~ is a tool that allows you to declare what packages are installed in your system. It's highly inspired in [[https://nixos.org/][NixOS]] and [[https://gitlab.com/oglo12/rebos][rebos]], but it's main goals are to simply allow the user to declare the packages they want to install in their system the distro package manager. Currently there is support for Arch distros with ~pacman~, and Void Linux ~xbps~.
 
 To use this, you must read the [[#setup][Setup]] section to properly understand how to use it. Use with caution! It's assumed you know the C programming language.
 
@@ -87,6 +87,10 @@ Assumed tree:
   # └── dpacker.h
 #+END_SRC
 
+#+BEGIN_QUOTE
+You can also check an example at ~./src/example.c~.
+#+END_QUOTE
+
 *** Compiling
 
 #+BEGIN_SRC bash
@@ -102,7 +106,11 @@ dpacker -s sudo # sudo, doas
 
 ** For Artix Linux users
 
-If you are an Artix Linux user, and you use gremlins packages, you may also compile with the `-DARTIX_GREMLINS` to enable those repositories, since the repositories are currently hardcoded.
+If you are an Artix Linux user, and you use gremlins packages, you may also compile with the ~-DARTIX_GREMLINS~ to enable those repositories, since the repositories are currently hardcoded.
+
+** For Void Linux users
+
+~dpacker~ doesn't support user packages yet. I personally don't now how it works, or if it's a thing. Later I'll look up for ~xbps-src~ and see how it works.
 
 ** AUR
 
@@ -121,6 +129,8 @@ If you are having trouble to understand how to use it, you can check out my pers
 **** warning: x is up to date -- skipping
 
 If each time you run ~dpacker~ and ~pacman~ complains that there are packages already up-to-date, it means these packages, where installed as dependencies to another package. You can fix it, by reinstalling them explicitly as follows: ~pacman -S --asexplicit your-package~.
+
+For Void users, the ~xbps~ version is already ahead, and will turn ~automatic-install~ packages into ~manual~.
 
 ** License
 
