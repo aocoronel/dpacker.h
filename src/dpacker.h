@@ -329,7 +329,7 @@ int dpacker(DPacker_Interface interface, char **native, char **user, int argc, c
            PACKAGE_METADATA.dependency,
            PACKAGE_METADATA.total_used_size / 1024 / 1024);
 
-    dpacker_sync();
+    call(dpacker_sync());
 
     return 0;
 }
