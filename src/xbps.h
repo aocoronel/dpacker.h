@@ -217,6 +217,7 @@ static const char *dpacker_xbps_collect(char **native, char **user) {
 
     da_free(&config_native_packages);
 
+    if (rv == 0) xbps_pkgdb_update(&xh, true, false);
     xbps_end(&xh);
 
     return rv == 0 ? NULL : strerror(rv);
