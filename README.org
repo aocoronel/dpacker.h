@@ -11,7 +11,7 @@ Differently than [[https://gitlab.com/oglo12/rebos][rebos]] there is no setup st
 ** Features
 
 - Install, uninstall packages from configuration
-- Support for ~pacman~ is already provided
+- Support for ~pacman~ and ~xbps~ is already provided
 
 ** Setup
 
@@ -22,10 +22,13 @@ The following example is valid only for Arch based distributions.
 To get started, you may add all your installed packages to a starting configuration file. You must provide all your system packages that were **explicitly installed** by the user, do not include dependencies, unless you need it.
 
 #+BEGIN_SRC bash
-# To get all your native packages (official packages)
-pacman -Qqen >> "dpacker.c"
-# AUR packages
-pacman -Qqem >> "dpacker.c"
+  # To get all your native packages (official packages)
+  pacman -Qqen >> "dpacker.c"
+  # AUR packages
+  pacman -Qqem >> "dpacker.c"
+
+  # For Void Linux, this may work
+  xbps-query -l | awk '{sub(/-[0-9].*/, "", $2); print $2}'
 #+END_SRC
 
 After that, you can construct your array as a compile-time known, or at runtime (using ~da_append()~).
@@ -52,7 +55,9 @@ To setup you configuration you need to prepare the C source file as follows:
 
 #+BEGIN_SRC c
   #include "dpacker.h"
+
   #include "alpm.h" // for Arch Linux
+  #include "xbps.h" // for Void Linux
 
   char *pacman[] = {
     "bash",
@@ -71,9 +76,17 @@ To setup you configuration you need to prepare the C source file as follows:
   int main(int argc, char **argv) {
     // If you ever need to use this for a different package manager, you have full control over it
     DPacker_Interface interface;
+
+    // Arch Linux
     interface.init = dpacker_alpm_init;
     interface.collect = dpacker_alpm_collect;
-    interface.sync = dpacker_alpm_sync;
+
+    // or
+
+    // Void Linux
+    interface.init = dpacker_xbps_init;
+    interface.collect = dpacker_xbps_collect;
+
     return dpacker(interface, pacman, aur, argc, argv);
   }
 #+END_SRC
@@ -82,9 +95,10 @@ Assumed tree:
 
 #+BEGIN_SRC 
   # .
-  # ├── alpm.h 
+  # ├── alpm.h
   # ├── dpacker.c # User provided
-  # └── dpacker.h
+  # ├── dpacker.h
+  # └── xbps.h
 #+END_SRC
 
 #+BEGIN_QUOTE
@@ -94,14 +108,21 @@ You can also check an example at ~./src/example.c~.
 *** Compiling
 
 #+BEGIN_SRC bash
-gcc ./dpacker.c -I. -lalpm -o dpacker
+  gcc ./dpacker.c -I. -lalpm -o dpacker // Arch
+  gcc ./dpacker.c -I. -lxbps -o dpacker // Void
 #+END_SRC
 
 ** Usage
 
 #+BEGIN_SRC bash
-dpacker
-dpacker -s sudo # sudo, doas
+  Usage: dpacker [OPTION]
+
+  Options:
+    -d          Enable debug
+    -D          Enable dry mode
+    -h          Display this message and exits
+    -p [sudo]   Sets privileage escalation tool
+    -y          Accepts everything
 #+END_SRC
 
 ** For Artix Linux users
