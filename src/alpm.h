@@ -7,8 +7,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-char SUDO[256] = "sudo";
-
 // Copy pasted from pacman source code:
 // https://gitlab.archlinux.org/pacman/pacman/-/blob/master/src/pacman/query.c
 static unsigned short dpacker_alpm_pkg_get_locality(alpm_pkg_t *pkg, alpm_handle_t *handle) {
@@ -38,32 +36,39 @@ static bool dpacker_alpm_is_installed(const char *name, alpm_list_t *list) {
     return false;
 }
 
-const char *dpacker_alpm_init(DPacker *p) {
-    dpacker_assert_nonnull(p);
+const char *dpacker_alpm_init(void) {
+    bool has_sudo = DPACKER_CONFIG.sudo[0] != '\0';
 
-    da_append(&p->installed_user, "makepkg");
-    da_append(&p->installed_user, "-si");
-    da_append(&p->installed_user, "--dir");
+    if (has_sudo) {
+        da_append(&DPACKER.installed_native, DPACKER_CONFIG.sudo);
+        DPACKER.installed_native.initial_command += 1;
 
-    da_append(&p->installed_native, SUDO);
-    da_append(&p->installed_native, "pacman");
-    da_append(&p->installed_native, "-S");
+        da_append(&DPACKER.to_remove, DPACKER_CONFIG.sudo);
+        DPACKER.to_remove.initial_command += 1;
+    }
 
-    da_append(&p->to_remove, SUDO);
-    da_append(&p->to_remove, "pacman");
-    da_append(&p->to_remove, "-Rns");
+    da_append(&DPACKER.installed_user, "makepkg");
+    da_append(&DPACKER.installed_user, "-si");
+    da_append(&DPACKER.installed_user, "--dir");
+    DPACKER.installed_user.initial_command += 3;
+
+    da_append(&DPACKER.installed_native, "pacman");
+    da_append(&DPACKER.installed_native, "-S");
+    DPACKER.installed_native.initial_command += 2;
+
+    da_append(&DPACKER.to_remove, "pacman");
+    da_append(&DPACKER.to_remove, "-Rns");
+    DPACKER.to_remove.initial_command += 2;
 
     return NULL;
 }
 
-static const char *
-dpacker_alpm_collect(DPacker *packages, char **pacman, char **aur, DPacker_Pkg_Metadata *out) {
-    dpacker_assert_nonnull(packages);
+static const char *dpacker_alpm_collect(char **pacman, char **aur) {
     dpacker_assert_nonnull(pacman);
 
     // pacman and aur static arrays:
-    DPacker_Pkg_List pacman_config_pkgs = { 0, 0, NULL };
-    DPacker_Pkg_List aur_config_pkgs = { 0, 0, NULL };
+    DPacker_Pkg_List pacman_config_pkgs = { 0 };
+    DPacker_Pkg_List aur_config_pkgs = { 0 };
 
     // "0" is ignored, so we can iterate till NULL instead
     if (aur) {
@@ -126,14 +131,14 @@ dpacker_alpm_collect(DPacker *packages, char **pacman, char **aur, DPacker_Pkg_M
 
         off_t pkg_size = alpm_pkg_get_isize(pkg);
 
-        out->total_used_size += pkg_size;
+        PACKAGE_METADATA.total_used_size += pkg_size;
 
         if (alpm_pkg_get_reason(pkg) != ALPM_PKG_REASON_EXPLICIT) {
-            out->dependency += 1;
+            PACKAGE_METADATA.dependency += 1;
             continue;
         }
 
-        out->manual += 1;
+        PACKAGE_METADATA.manual += 1;
 
         if (dpacker_alpm_pkg_get_locality(pkg, handle)) { // Foreign
             for (size_t i = 0; i < aur_config_pkgs.count; i++) {
@@ -146,7 +151,7 @@ dpacker_alpm_collect(DPacker *packages, char **pacman, char **aur, DPacker_Pkg_M
             }
 
             if (!found) {
-                da_append(&packages->to_remove, name);
+                da_append(&DPACKER.to_remove, name);
             }
         } else { // Native
             for (size_t i = 0; i < pacman_config_pkgs.count; i++) {
@@ -159,7 +164,7 @@ dpacker_alpm_collect(DPacker *packages, char **pacman, char **aur, DPacker_Pkg_M
             }
 
             if (!found) {
-                da_append(&packages->to_remove, name);
+                da_append(&DPACKER.to_remove, name);
             }
         }
     }
@@ -170,7 +175,7 @@ dpacker_alpm_collect(DPacker *packages, char **pacman, char **aur, DPacker_Pkg_M
         if (!dpacker_alpm_is_installed(cfg, list)) {
             char *path = (char *)malloc(cfg_len + 256);
             snprintf(path, cfg_len + 256, "./pkg/%s", cfg);
-            da_append(&packages->installed_user, path);
+            da_append(&DPACKER.installed_user, path);
             free(path);
         }
     }
@@ -178,7 +183,7 @@ dpacker_alpm_collect(DPacker *packages, char **pacman, char **aur, DPacker_Pkg_M
     for (size_t i = 0; i < pacman_config_pkgs.count; i++) {
         const char *cfg = pacman_config_pkgs.data[i];
         if (!dpacker_alpm_is_installed(cfg, list)) {
-            da_append(&packages->installed_native, cfg);
+            da_append(&DPACKER.installed_native, cfg);
         }
     }
 
@@ -188,48 +193,6 @@ dpacker_alpm_collect(DPacker *packages, char **pacman, char **aur, DPacker_Pkg_M
 
     da_free(&aur_config_pkgs);
     da_free(&pacman_config_pkgs);
-
-    da_append_null(&packages->installed_native);
-    da_append_null(&packages->installed_user);
-    da_append_null(&packages->to_remove);
-
-    return NULL;
-}
-
-static const char *dpacker_alpm_sync(DPacker *pkgs) {
-    dpacker_assert_nonnull(pkgs);
-    // 4 --> sudo pacman -S ... NULL
-    if (pkgs->installed_native.count > 4) {
-        printf("%sInstalling pacman packages:%s %zu\n",
-               COLOR_GREEN,
-               COLOR_RESET,
-               pkgs->installed_native.count - 4);
-        dpacker_sh(pkgs->installed_native.data);
-    } else {
-        printf("%spacman packages:%s there is nothing to do\n", COLOR_BOLD, COLOR_RESET);
-    }
-
-    // 3 --> makepkg -si --dir ... NULL
-    if (pkgs->installed_user.count > 4) {
-        printf("%sInstalling AUR packages:%s %zu\n",
-               COLOR_GREEN,
-               COLOR_RESET,
-               pkgs->installed_user.count - 4);
-        dpacker_sh(pkgs->installed_user.data);
-    } else {
-        printf("%sAUR packages:%s there is nothing to do\n", COLOR_BOLD, COLOR_RESET);
-    }
-
-    // 4 --> sudo pacman -Rns ... NULL
-    if (pkgs->to_remove.count > 4) {
-        printf("%sRemoving packages:%s %zu\n", COLOR_GREEN, COLOR_RESET, pkgs->to_remove.count - 4);
-        da_append_null(&pkgs->to_remove);
-        dpacker_sh(pkgs->to_remove.data);
-    }
-
-    da_free(&pkgs->installed_user);
-    da_free(&pkgs->installed_native);
-    da_free(&pkgs->to_remove);
 
     return NULL;
 }

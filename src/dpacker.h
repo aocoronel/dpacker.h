@@ -12,6 +12,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#define COLOR_MAGENTA "\x1b[35m"
 #define COLOR_GREEN "\x1b[32m"
 #define COLOR_BOLD "\x1b[1m"
 #define COLOR_RESET "\x1b[0m"
@@ -69,18 +70,14 @@
         free((da)->data);                          \
     } while (0)
 
-extern char SUDO[256];
-
 typedef struct {
+    size_t initial_command;
     size_t count;
     size_t cap;
     char **data;
 } DPacker_Pkg_List;
 
 typedef struct {
-    // Context to be passed from init() to collect() and sync()
-    // This is optional.
-    void *ctx;
     // Official packages from distribution
     DPacker_Pkg_List installed_native;
     // User provided packages, like AUR
@@ -99,22 +96,63 @@ typedef struct {
 
 typedef struct {
     // Initialize dynamic arrays
-    const char *(*init)(DPacker *);
+    const char *(*init)(void);
     // Find all packages to be installed, to be removed and dependencies
-    const char *(*collect)(DPacker *, char **manual, char **user, DPacker_Pkg_Metadata *out);
-    // Install/remove packages
-    const char *(*sync)(DPacker *);
+    const char *(*collect)(char **manual, char **user);
 } DPacker_Interface;
+
+struct DPacker_Config {
+    char sudo[256];
+    bool yes;
+    bool debug;
+    bool dry;
+};
+
+DPacker DPACKER;
+DPacker_Pkg_Metadata PACKAGE_METADATA;
+struct DPacker_Config DPACKER_CONFIG;
+
+static void dpacker_usage(const char *program) {
+    char *message = "Usage: %s [OPTION]\n"
+                    "\n"
+                    "Options:\n"
+                    "  -d          Enable debug\n"
+                    "  -D          Enable dry mode\n"
+                    "  -h          Display this message and exits\n"
+                    "  -p [sudo]   Sets privileage escalation tool\n"
+                    "  -y          Accepts everything\n";
+    printf(message, program);
+    exit(0);
+}
 
 static bool dpacker_parse_args(int argc, char **argv) {
     dpacker_assert_nonnull(argv);
 
+    char *env = getenv("SUDO");
+    if (env) {
+        dpacker_assert(strlen(env) < 255, "$SUDO is too large");
+        strcpy(DPACKER_CONFIG.sudo, env);
+    }
+
     int opt = 0;
-    while ((opt = getopt(argc, argv, ":p:")) != -1) {
+    while ((opt = getopt(argc, argv, ":p:yhdD")) != -1) {
         switch (opt) {
         case 'p':
             // p --> Privileage Escalation Tool (sudo/doas)
-            strcpy(SUDO, optarg);
+            dpacker_assert(strlen(optarg) < 255, "'%s' is too large", optarg);
+            strcpy(DPACKER_CONFIG.sudo, optarg);
+            break;
+        case 'y': // accepts everything
+            DPACKER_CONFIG.yes = true;
+            break;
+        case 'd':
+            DPACKER_CONFIG.debug = true;
+            break;
+        case 'D':
+            DPACKER_CONFIG.dry = true;
+            break;
+        case 'h':
+            dpacker_usage(argv[0]);
             break;
         case ':':
             errorf("option '%c' needs a value\n", opt);
@@ -158,20 +196,114 @@ static int dpacker_sh(char **argv) {
     return WEXITSTATUS(status);
 }
 
-int dpacker(DPacker_Interface interface, char **manual, char **user, int argc, char **argv) {
-    dpacker_assert_nonnull(manual);
-    dpacker_assert_nonnull(argv);
+#define range(begin, end) for (size_t it = begin; it < end; it++)
+static const char *dpacker_sync(void) {
+    da_append_null(&DPACKER.installed_native);
+    da_append_null(&DPACKER.to_remove);
 
-    char *env = getenv("SUDO");
-    if (env) {
-        dpacker_assert(strlen(env) < sizeof(SUDO), "$SUDO is too large");
-        strcpy(SUDO, env);
+    DPacker_Pkg_List native = DPACKER.installed_native;
+    DPacker_Pkg_List user = DPACKER.installed_user;
+    DPacker_Pkg_List to_remove = DPACKER.to_remove;
+
+    // Increment last time for NULL
+    native.count -= 1;
+    user.count -= 1;
+    to_remove.count -= 1;
+
+    int installing_native = native.count - native.initial_command;
+    int installing_user = user.count - user.initial_command;
+    int uninstalling = to_remove.count - to_remove.initial_command;
+
+    if (DPACKER_CONFIG.debug) {
+        if (native.count > native.initial_command) {
+            printf("%sInstalling native packages:%s %d\n",
+                   COLOR_MAGENTA,
+                   COLOR_RESET,
+                   installing_native);
+            range(native.initial_command, native.count) {
+                printf("%s ", native.data[it]);
+            }
+            putc('\n', stdout);
+        }
     }
 
-    if (dpacker_parse_args(argc, argv) == false) return 1;
+    if (native.count > native.initial_command) {
+        if (!DPACKER_CONFIG.dry) {
+            printf("%sInstalling native packages:%s %d\n",
+                   COLOR_GREEN,
+                   COLOR_RESET,
+                   installing_native);
+            dpacker_sh(native.data);
+        }
+    } else {
+        printf("%snative packages:%s there is nothing to do\n", COLOR_BOLD, COLOR_RESET);
+    }
 
-    DPacker pkgs = { 0 };
-    DPacker_Pkg_Metadata pkg_metadata = { 0 };
+    da_free(&DPACKER.installed_native);
+
+    bool has_user = user.cap > 0;
+
+    if (has_user) {
+        da_append_null(&DPACKER.installed_user);
+        if (DPACKER_CONFIG.debug) {
+            if (user.count > user.initial_command) {
+                printf("%sInstalling user packages:%s %d\n",
+                       COLOR_MAGENTA,
+                       COLOR_RESET,
+                       installing_user);
+                printf("User packages to be installed:\n");
+                range(user.initial_command, user.count) {
+                    printf("%s ", user.data[it]);
+                }
+                putc('\n', stdout);
+            }
+        }
+
+        if (user.count > user.initial_command) {
+            if (!DPACKER_CONFIG.dry) {
+                printf("%sInstalling user packages:%s %d\n",
+                       COLOR_GREEN,
+                       COLOR_RESET,
+                       installing_user);
+                dpacker_sh(user.data);
+            }
+        } else {
+            printf("%suser packages:%s there is nothing to do\n", COLOR_BOLD, COLOR_RESET);
+        }
+
+        da_free(&DPACKER.installed_user);
+    }
+
+    if (DPACKER_CONFIG.debug) {
+        if (to_remove.count > to_remove.initial_command) {
+            printf("%sRemoving packages:%s %d\n", COLOR_MAGENTA, COLOR_RESET, uninstalling);
+            range(to_remove.initial_command, to_remove.count) {
+                printf("%s ", to_remove.data[it]);
+            }
+            putc('\n', stdout);
+        }
+    }
+
+    if (to_remove.count > to_remove.initial_command) {
+        if (!DPACKER_CONFIG.dry) {
+            printf("%sRemoving packages:%s %d\n", COLOR_GREEN, COLOR_RESET, uninstalling);
+            dpacker_sh(to_remove.data);
+        }
+    }
+
+    da_free(&DPACKER.to_remove);
+
+    return NULL;
+}
+
+int dpacker(DPacker_Interface interface, char **native, char **user, int argc, char **argv) {
+    dpacker_assert_nonnull(native);
+    dpacker_assert_nonnull(argv);
+
+    DPACKER_CONFIG.sudo[0] = '\0';
+    DPACKER_CONFIG.yes = false;
+
+    if (dpacker_parse_args(argc, argv) == false) return 1;
 
 #define call(...)                      \
     do {                               \
@@ -184,17 +316,23 @@ int dpacker(DPacker_Interface interface, char **manual, char **user, int argc, c
         }                              \
     } while (0)
 
-    call(interface.init(&pkgs));
-    call(interface.collect(&pkgs, manual, user, &pkg_metadata));
+    // default to 'sudo'
+    if (DPACKER_CONFIG.sudo[0] == '\0') {
+        strcpy(DPACKER_CONFIG.sudo, "sudo");
+    }
+
+    call(interface.init());
+    call(interface.collect(native, user));
 
     printf("%d manual packages, and %d dependencies installed, using a total of %zu MBs\n",
-           pkg_metadata.manual,
-           pkg_metadata.dependency,
-           pkg_metadata.total_used_size / 1024 / 1024);
+           PACKAGE_METADATA.manual,
+           PACKAGE_METADATA.dependency,
+           PACKAGE_METADATA.total_used_size / 1024 / 1024);
 
-    call(interface.sync(&pkgs));
+    dpacker_sync();
 
     return 0;
 }
+#undef range
 
 #endif // DPACKER_H_
