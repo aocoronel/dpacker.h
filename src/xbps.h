@@ -155,6 +155,7 @@ static const char *dpacker_xbps_collect(char **native, char **user) {
         exit(1);
     }
 
+    if (xbps_pkgdb_lock(&xh) != 0) return "failed to lock database";
     rv = xbps_pkgdb_foreach_cb(&xh, foreach_dict, &lpc);
 
     if (false) {
@@ -218,6 +219,7 @@ static const char *dpacker_xbps_collect(char **native, char **user) {
     da_free(&config_native_packages);
 
     if (rv == 0) xbps_pkgdb_update(&xh, true, false);
+    xbps_pkgdb_unlock(&xh);
     xbps_end(&xh);
 
     return rv == 0 ? NULL : strerror(rv);
