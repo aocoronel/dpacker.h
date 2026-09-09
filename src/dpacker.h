@@ -78,6 +78,13 @@ typedef struct {
 } DPacker_Pkg_List;
 
 typedef struct {
+    const char *xbps_src_root;
+    const char *user;
+} DPacker_Xbps;
+
+DPacker_Xbps VOID_CONFIG;
+
+typedef struct {
     // Official packages from distribution
     DPacker_Pkg_List installed_native;
     // User provided packages, like AUR
@@ -200,6 +207,7 @@ static int dpacker_sh(char **argv) {
 static const char *dpacker_sync(void) {
     da_append_null(&DPACKER.installed_native);
     da_append_null(&DPACKER.to_remove);
+    da_append_null(&DPACKER.installed_user);
 
     DPacker_Pkg_List native = DPACKER.installed_native;
     DPacker_Pkg_List user = DPACKER.installed_user;
@@ -244,7 +252,6 @@ static const char *dpacker_sync(void) {
     bool has_user = user.cap > 0;
 
     if (has_user) {
-        da_append_null(&DPACKER.installed_user);
         if (DPACKER_CONFIG.debug) {
             if (user.count > user.initial_command) {
                 printf("%sInstalling user packages:%s %d\n",
