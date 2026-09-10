@@ -79,7 +79,9 @@ typedef struct {
 
 typedef struct {
     const char *xbps_src_root;
-    const char *user;
+    const char *rootdir;
+    const char *cachedir;
+    const char *confdir;
 } DPacker_Xbps;
 
 DPacker_Xbps VOID_CONFIG;
