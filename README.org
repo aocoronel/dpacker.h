@@ -12,12 +12,9 @@ Differently than [[https://gitlab.com/oglo12/rebos][rebos]] there is no setup st
 
 - Install, uninstall packages from configuration
 - Support for ~pacman~ and ~xbps~ is already provided
+- Also support installing custom user provided packages, using ~PKGBUILD~ or ~xbps-src~
 
 ** Setup
-
-#+BEGIN_QUOTE
-The following example is valid only for Arch based distributions.
-#+END_QUOTE
 
 To get started, you may add all your installed packages to a starting configuration file. You must provide all your system packages that were **explicitly installed** by the user, do not include dependencies, unless you need it.
 
@@ -93,7 +90,7 @@ To setup you configuration you need to prepare the C source file as follows:
 
 Assumed tree:
 
-#+BEGIN_SRC 
+#+BEGIN_SRC
   # .
   # ├── alpm.h
   # ├── dpacker.c # User provided
@@ -129,11 +126,9 @@ You can also check an example at ~./src/example.c~.
 
 If you are an Artix Linux user, and you use gremlins packages, you may also compile with the ~-DARTIX_GREMLINS~ to enable those repositories, since the repositories are currently hardcoded.
 
-** For Void Linux users
+** User packages
 
-~dpacker~ doesn't support user packages yet. I personally don't now how it works, or if it's a thing. Later I'll look up for ~xbps-src~ and see how it works.
-
-** AUR
+*** Arch
 
 If you want to use AUR packages, there is quite a couple of things you should do.
 
@@ -142,6 +137,18 @@ Previously ~dpacker~ was using an AUR helper of your like, but that's change for
 The workflow is the following: Review the ~PKGBUILD~ and the entire source tree, download it and put it in ~./pkg/~. Example: ~mutt-wizard~ package should be ~./pkg/mutt-wizard/PKGBUILD~. After that, just include ~mutt-wizard~ into your ~char *aur[]~ list.
 
 If you are having trouble to understand how to use it, you can check out my personal configuration as an example: [[https://github.com/aocoronel/dpacker-config][dpacker-config]].
+
+*** Void
+
+The ~xbps~ version doesn't have a special directory to store the templates. You have to define where your local ~void-packages~ repository is located at:
+
+#+BEGIN_SRC c
+VOID_CONFIG.xbps_src_root = "/home/aoc/void-packages";
+#+END_SRC
+
+Then add your custom templates manually, as your preferred way, and include the packages in your user array.
+
+Before that, you also need to make ~./src/dpacker-xbps-src~ available on your system. This is a small shell script that loops over each package to be installed and call ~xbps-src~ on them, since it doesn't support multiple packages.
 
 ** FAQ
 
